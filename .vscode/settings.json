@@ -1,0 +1,9 @@
+{
+  "files.watcherExclude": {
+    "**/target": true
+  },
+  "java.compile.nullAnalysis.mode": "automatic",
+  "jest.jestCommandLine": "npx jest",
+  "jest.rootPath": "./jest",
+  "jest.autoRun": "off"
+}

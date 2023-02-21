@@ -1,0 +1,173 @@
+name: CI
+
+# Controls when the workflow will run
+on:
+  push:
+    branches: [ main ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      checks: write
+      contents: write
+      deployments: write
+      id-token: write
+      issues: write
+      discussions: write
+      packages: write
+      repository-projects: write
+      security-events: write
+      statuses: write
+
+    env:
+      SEEKER_SERVER_URL: ${{ vars.SEEKER_SERVER_URL }}
+      SEEKER_PROJECT_KEY: ${{ vars.SEEKER_PROJECT_KEY }}
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          cache: 'npm'
+          cache-dependency-path: jest/package-lock.json
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'adopt'
+      
+      - name: Cache Maven packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Build with Maven
+        working-directory: ./java-api
+        run: mvn -DskipTests=true package
+
+      - name: Release
+        uses: djnicholson/release-action@v2.11
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-name: 'v2.0'
+          tag-name: 'v2.0'
+          asset-name: 'api.jar'
+          file: 'java-api/target/api.jar'
+
+      - name: Check whether Seeker is enabled
+        id: seeker-check
+        shell: bash
+        run: |
+          if [ "${{ secrets.SEEKER_ACCESS_TOKEN }}" != '' ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT;
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT;
+          fi
+    
+      - name: Add Seeker agent
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        uses: mtolley/seeker-github-actions/download-seeker-agent@v1.1
+        with:
+          technology: JAVA
+          osFamily: LINUX
+
+      - name: Add Java agent
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          echo "JAVA_TOOL_OPTIONS=-javaagent:`pwd`/seeker/seeker-agent.jar" >> $GITHUB_ENV
+
+      - name: Start HippoTech server for testing
+        working-directory: ./java-api
+        run: ./start.sh
+
+      # Cypress tests are very nice, love this framework! However, for sheer speed
+      # we'll use the Jest equivalent, so these steps are now commented out.
+
+      # - name: Install Cypress
+      #   uses: cypress-io/github-action@v4
+      #   with:
+      #     working-directory: ./hippotech-react
+      #     runTests: false
+
+      # - name: Cypress run
+      #   uses: cypress-io/github-action@v4
+      #   with:
+      #     working-directory: ./hippotech-react
+      #     install: false
+
+      - name: Run Automated Acceptance Tests
+        working-directory: ./jest
+        run: npm install && npm test
+        
+      - name: Remove Java agent
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        shell: bash
+        run: |
+          echo "JAVA_TOOL_OPTIONS=" >> $GITHUB_ENV
+
+      - name: List Seeker Vulnerabilities
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        uses: mtolley/seeker-github-actions/list-seeker-vulnerabilities@v1.1
+        with:
+          seekerAPIToken: ${{ secrets.SEEKER_ACCESS_TOKEN }}
+          minSeverity: HIGH
+          onlySeekerVerified: true
+
+      - name: Seeker Compliance Reporting
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        uses: mtolley/seeker-github-actions/seeker-compliance-reporting@v1.1
+        with:
+          seekerAPIToken: ${{ secrets.SEEKER_ACCESS_TOKEN }}
+          generateComplianceReportPDF: true
+          failBuildIfNotInCompliance: true
+
+      # - name: Test Report
+      #   uses: dorny/test-reporter@v1
+      #   if: success() || failure()
+      #   with:
+      #     name: JEST Tests            
+      #     path: jest/junit.xml    
+      #     reporter: jest-junit        
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v3
+        if: success() || failure() # always run even if the previous step fails
+        with:
+          report_paths: 'jest/*.xml'
+
+      - name: Get results from Seeker
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        uses: lejouni/seeker-report-export@main
+        with:
+          url: ${{vars.SEEKER_SERVER_URL}}
+          token: ${{secrets.SEEKER_ACCESS_TOKEN}}
+          project: ${{vars.SEEKER_PROJECT_KEY}}
+          format: sarif
+          stacktrace: true
+
+      - name: Upload SARIF file
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          # Path to SARIF file
+          #sarif_file: ${{github.workspace}}/SeekerResults.sarif.json
+          sarif_file: samplesarif.json
+        continue-on-error: false
+
+      - name: Archive scanning results
+        if: ${{ steps.seeker-check.outputs.enabled == 'true' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: seeker-analysis-results
+          path: ${{github.workspace}}/SeekerResults.sarif.json
+        continue-on-error: false

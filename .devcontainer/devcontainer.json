@@ -1,0 +1,25 @@
+{
+    "image":"mcr.microsoft.com/devcontainers/universal:2",
+    // "features": {
+    //   "ghcr.io/devcontainers-contrib/features/jest:2": {},
+    // },  
+    // "postStartCommand": "nohup bash -c 'echo starting > log.txt && ./init.sh &'",
+    "postStartCommand": [ "bash", "wait-for-app-startup.sh" ],
+    "forwardPorts": [ 3001 ],
+	// Configure tool-specific properties.
+	"customizations": {
+		// Configure properties specific to VS Code.
+		"vscode": {
+			// Set *default* container specific settings.json values on container create.
+			"settings": { 
+				"files.watcherExclude": {
+					"**/target/**": true
+				}
+			}
+			
+			// "extensions": [
+			// 	"Orta.vscode-jest"
+			// ]
+		}
+	}
+}
